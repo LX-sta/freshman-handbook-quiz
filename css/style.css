@@ -245,6 +245,9 @@ input[type="text"] { font-family: inherit; font-size: 15px; }
 .r-detail .v.you-bad { color: var(--red); }
 .r-detail .v.ans { color: var(--green); font-weight: 600; }
 .r-detail .src { color: var(--text-sub); font-size: 12.5px; }
+.r-detail .row.excerpt { background: #f7f9fb; border-radius: 8px; padding: 8px 10px; margin-top: 4px; }
+.r-detail .row.excerpt .k { color: var(--primary-deep); }
+.r-detail .row.excerpt .v { font-size: 13px; line-height: 1.7; color: var(--text); }
 .r-detail .fill-line { padding: 2px 0; }
 .r-detail .fill-line .u { margin-right: 6px; }
 
@@ -255,6 +258,19 @@ input[type="text"] { font-family: inherit; font-size: 15px; }
 .w-item .head .stem-s { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
 .w-item .cnt { flex: none; font-size: 12px; color: var(--red); background: var(--red-bg); border-radius: 999px; padding: 1px 8px; }
 .w-item .cnt.ok { color: var(--green); background: var(--green-bg); }
+
+/* ============ 错题背诵 ============ */
+.recite-hint { margin-top: 16px; font-size: 13px; color: var(--text-sub); text-align: center; padding: 22px 0; }
+.recite-opts .opt { pointer-events: none; }
+.recite-reveal { margin-top: 16px; animation: fadein .18s ease; }
+.recite-reveal .recite-ans {
+  background: var(--green-bg); color: var(--green); font-weight: 600;
+  border-radius: 10px; padding: 12px 14px; font-size: 15px;
+}
+.recite-reveal .recite-src {
+  margin-top: 8px; font-size: 13px; color: var(--text-sub);
+  background: #f7f9fb; border-radius: 10px; padding: 10px 12px; line-height: 1.7;
+}
 .w-item .del { flex: none; color: var(--text-sub); font-size: 17px; padding: 0 4px; }
 .w-item .body { display: none; margin-top: 10px; font-size: 13.5px; }
 .w-item.open .body { display: block; }
