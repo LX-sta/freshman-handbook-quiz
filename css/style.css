@@ -254,6 +254,7 @@ input[type="text"] { font-family: inherit; font-size: 15px; }
 .w-item .head { display: flex; align-items: center; gap: 8px; }
 .w-item .head .stem-s { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
 .w-item .cnt { flex: none; font-size: 12px; color: var(--red); background: var(--red-bg); border-radius: 999px; padding: 1px 8px; }
+.w-item .cnt.ok { color: var(--green); background: var(--green-bg); }
 .w-item .del { flex: none; color: var(--text-sub); font-size: 17px; padding: 0 4px; }
 .w-item .body { display: none; margin-top: 10px; font-size: 13.5px; }
 .w-item.open .body { display: block; }
