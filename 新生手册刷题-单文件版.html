@@ -262,6 +262,7 @@ input[type="text"] { font-family: inherit; font-size: 15px; }
 .w-item .head { display: flex; align-items: center; gap: 8px; }
 .w-item .head .stem-s { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
 .w-item .cnt { flex: none; font-size: 12px; color: var(--red); background: var(--red-bg); border-radius: 999px; padding: 1px 8px; }
+.w-item .cnt.ok { color: var(--green); background: var(--green-bg); }
 .w-item .del { flex: none; color: var(--text-sub); font-size: 17px; padding: 0 4px; }
 .w-item .body { display: none; margin-top: 10px; font-size: 13.5px; }
 .w-item.open .body { display: block; }
@@ -324,8 +325,9 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     session: "xscs_session_v1",
     filters: "xscs_filters_v1"
   };
-  var QUIZ_SIZE = 20;
+  var QUIZ_SIZES = [20, 50, 100];
   var SCORE_PER_Q = 2;
+  var WRONG_NEED = 3;   // 错题需连续答对的次数才移出错题集
 
   function lsGet(key, def) {
     try {
@@ -512,19 +514,32 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     lsSet(LS_KEY.stats, s);
   }
 
-  /* 错题入册 */
+  /* 错题入册（答错）：新增或 count+1，连对计数清零 */
   function recordWrong(qids, answers) {
     var w = getWrong();
     qids.forEach(function (qid) {
-      var item = w[qid] || { count: 0, lastAnswer: null, time: 0 };
+      var item = w[qid] || { count: 0, okStreak: 0, lastAnswer: null, time: 0 };
       item.count += 1;
+      item.okStreak = 0;
       item.lastAnswer = answers[qid];
       item.time = Date.now();
       w[qid] = item;
     });
     setWrong(w);
   }
-  /* 答对移出错题集 */
+  /* 答对：在错题集中则连对 +1，达到 WRONG_NEED 次移出。返回 {streak, removed} */
+  function streakWrong(qid) {
+    var w = getWrong();
+    var item = w[qid];
+    if (!item) return null;
+    item.okStreak = (item.okStreak || 0) + 1;
+    item.time = Date.now();
+    var removed = item.okStreak >= WRONG_NEED;
+    if (removed) delete w[qid]; else w[qid] = item;
+    setWrong(w);
+    return { streak: Math.min(item.okStreak, WRONG_NEED), removed: removed };
+  }
+  /* 手动移出错题集 */
   function removeWrong(qid) {
     var w = getWrong();
     if (w[qid]) { delete w[qid]; setWrong(w); }
@@ -563,8 +578,10 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     var stats = getStats();
     var wrong = getWrong();
     var rate = stats.answered ? Math.round(stats.correct / stats.answered * 100) : 0;
-    var filters = lsGet(LS_KEY.filters, { types: ["single", "multi", "judge", "fillin"], cats: [] });
+    var filters = lsGet(LS_KEY.filters, { types: ["single", "multi", "judge", "fillin"], cats: [], size: 20 });
     if (!filters.types || !filters.types.length) filters.types = ["single", "multi", "judge", "fillin"];
+    if (QUIZ_SIZES.indexOf(filters.size) < 0) filters.size = 20;
+    var poolSize = poolFromFilters().length;
 
     var typeCounts = {};
     QUESTIONS.forEach(function (q) { typeCounts[q.type] = (typeCounts[q.type] || 0) + 1; });
@@ -582,15 +599,22 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
           esc(c.name) + " " + c.count + "</button>";
       }).join("");
 
+    var sizeChips = QUIZ_SIZES.map(function (n) {
+      var on = filters.size === n;
+      var short = poolSize < n && poolSize > 0;
+      return '<button class="chip' + (on ? " on" : "") + '" data-size="' + n + '">' +
+        "<b>" + (short ? poolSize : n) + "</b>" + n + " 题" + (short ? "（不足）" : "") + "</button>";
+    }).join("");
+
     app.innerHTML =
       '<div class="page">' +
       '<div class="hero"><h1>新生手册刷题</h1>' +
-      "<p>中国石油大学（华东）· 共 " + QUESTIONS.length + " 道题 · 每次随机 20 题</p>" +
+      "<p>中国石油大学（华东）· 共 " + QUESTIONS.length + " 道题 · 每次随机 " + filters.size + " 题</p>" +
       '<div class="total"><b>' + QUESTIONS.length + "</b><span>道题目收录题库</span></div></div>" +
 
       '<button class="wrong-entry" data-act="wrongbook">' +
       '<div class="icon">✕</div><div class="info"><b>我的错题集</b>' +
-      "<span>" + (Object.keys(wrong).length ? "共 " + Object.keys(wrong).length + " 道错题，点击进入重练" : "暂无错题，练习后错题会自动加入") + "</span></div>" +
+      "<span>" + (Object.keys(wrong).length ? "共 " + Object.keys(wrong).length + " 道错题，连对 " + WRONG_NEED + " 次自动移出" : "暂无错题，练习后错题会自动加入") + "</span></div>" +
       '<div class="arrow">›</div></button>' +
 
       '<div class="stat-grid">' +
@@ -606,8 +630,12 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
       (filters.cats.length ? "已选 " + filters.cats.length + " 章" : "默认全部") +
       '</span></div><div class="chip-grid">' + catChips + "</div></div>" +
 
-      '<button class="btn-main" data-act="start">开始练习（随机 20 题）</button>' +
-      '<p style="text-align:center;color:var(--text-sub);font-size:12px;margin-top:10px">每答一题立即判对错 · 错题自动加入错题集 · 进度本地保存</p>' +
+      '<div class="card"><div class="section-title">每次题数 <span class="hint">答一题判一题</span></div>' +
+      '<div class="chip-grid type-grid">' + sizeChips + "</div></div>" +
+
+      '<button class="btn-main" data-act="start">开始练习（随机 ' +
+      (poolSize < filters.size && poolSize > 0 ? poolSize : filters.size) + " 题）</button>" +
+      '<p style="text-align:center;color:var(--text-sub);font-size:12px;margin-top:10px">每答一题立即判对错 · 错题连对 ' + WRONG_NEED + ' 次自动移出错题集 · 进度本地保存</p>' +
       "</div>";
 
     // 题型切换
@@ -619,6 +647,14 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
           if (filters.types.length === 1) { toast("至少保留一种题型"); return; }
           filters.types.splice(idx, 1);
         } else filters.types.push(t);
+        lsSet(LS_KEY.filters, filters);
+        renderHome();
+      };
+    });
+    // 题数切换（单选）
+    $$("[data-size]", app).forEach(function (btn) {
+      btn.onclick = function () {
+        filters.size = +btn.getAttribute("data-size");
         lsSet(LS_KEY.filters, filters);
         renderHome();
       };
@@ -654,7 +690,10 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
   function startExam() {
     var pool = poolFromFilters();
     if (!pool.length) { toast("筛选条件下没有题目，请调整筛选"); return; }
-    var picks = shuffle(pool).slice(0, QUIZ_SIZE);
+    var filters = lsGet(LS_KEY.filters, { types: ["single", "multi", "judge", "fillin"], cats: [], size: 20 });
+    var want = QUIZ_SIZES.indexOf(filters.size) >= 0 ? filters.size : 20;
+    var picks = shuffle(pool).slice(0, want);
+    if (picks.length < want) toast("筛选范围内仅有 " + pool.length + " 道题，本次全部练习");
     session = {
       mode: "exam",
       qids: picks.map(function (q) { return q.id; }),
@@ -711,9 +750,18 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     // 已批改：选项/输入框着色 + 反馈面板
     if (fb) {
       applyReviewStyle(q, ans, fb);
-      var extra = isW
-        ? (fb.correct ? "已自动移出错题集" : "错误次数 +1，保留在错题集")
-        : (fb.correct ? "" : "已加入错题集");
+      var extra = "";
+      if (fb.book) {
+        if (fb.correct) {
+          extra = fb.removed
+            ? "已连对 " + WRONG_NEED + "/" + WRONG_NEED + " 次，移出错题集"
+            : "已连对 " + fb.streak + "/" + WRONG_NEED + " 次，再连对 " + (WRONG_NEED - fb.streak) + " 次自动移出";
+        } else {
+          extra = "连对计数已清零，错误次数 +1，保留在错题集";
+        }
+      } else if (!fb.correct) {
+        extra = "已加入错题集";
+      }
       var detail = (fb.correct
         ? "<b>回答正确 ✓</b>"
         : "<b>回答错误 ✕</b><div class=\"why\">正确答案：<em>" + esc(correctText(q)) + "</em>" +
@@ -754,23 +802,22 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     var ans = s.answers[q.id];
     if (!isAnswered(q, ans)) { toast("请先作答"); return; }
     var correct = gradeAnswer(q, ans);
-    s.fb = { qid: q.id, correct: correct };
-    addStats(1, correct ? 1 : 0);
-    if (s.mode === "wrong") {
-      if (correct) {
-        removeWrong(q.id);
-      } else {
-        var w = getWrong();
-        if (w[q.id]) {
-          w[q.id].count += 1; w[q.id].lastAnswer = ans; w[q.id].time = Date.now();
-          setWrong(w);
-        } else {
-          recordWrong([q.id], s.answers);
-        }
+    var fb = { qid: q.id, correct: correct };
+    var w = getWrong();
+    var inBook = !!w[q.id];
+    fb.book = inBook;
+    if (correct) {
+      if (inBook) {
+        var st = streakWrong(q.id);
+        fb.streak = st.streak;
+        fb.removed = st.removed;
       }
-    } else if (!correct) {
+    } else {
       recordWrong([q.id], s.answers);
+      if (inBook) fb.streak = 0;
     }
+    s.fb = fb;
+    addStats(1, correct ? 1 : 0);
     saveSession();
     renderPractice();
     window.scrollTo(0, 0);
@@ -925,7 +972,7 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
       '<div class="score-ring" style="--p:' + ringP + '%"><div class="val">' + score + '<small> / ' + totalScore + " 分</small></div><div class=\"lab\">正确率 " + pct + '%</div></div>' +
       '<div class="sub"><b>' + correctIds.length + "</b> 题正确<span class=\"sep\">|</span><b>" + wrongIds.length + "</b> 题错误<span class=\"sep\">|</span>用时 <b>" + fmtTime(s.duration || 0) + "</b></div>" +
       (wrongIds.length
-        ? '<div class="sub" style="margin-top:4px;color:var(--red)">' + wrongIds.length + " 道错题已加入错题集</div>"
+        ? '<div class="sub" style="margin-top:4px;color:var(--red)">' + wrongIds.length + " 道答错，已加入错题集（连对 " + WRONG_NEED + " 次移出）</div>"
         : '<div class="sub" style="margin-top:4px;color:var(--green)">太棒了，全对！🎉</div>') +
       "</div>" +
       '<div class="btn-row" style="margin-bottom:14px">' +
@@ -959,6 +1006,7 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     } else {
       listHtml = entries.map(function (e) {
         var q = e.q;
+        var streak = e.item.okStreak || 0;
         var optsMini = (q.type === "fillin") ? "" :
           '<div class="opts-mini">' + q.options.map(function (o) {
             var isAns = q.answer.indexOf(o[0]) >= 0;
@@ -969,11 +1017,13 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
           '<span class="badge type">' + TYPE_NAME[q.type] + "</span>" +
           '<span class="stem-s">' + esc(q.stem) + "</span>" +
           '<span class="cnt">错 ' + e.item.count + " 次</span>" +
+          (streak > 0 ? '<span class="cnt ok">连对 ' + streak + "/" + WRONG_NEED + "</span>" : "") +
           '<button class="del" data-wdel="' + q.id + '" title="移出">×</button>' +
           "</div>" +
           '<div class="body"><div class="stem-full">' + esc(q.stem) + "</div>" +
           optsMini +
           '<div class="r-detail"><div class="row"><span class="k">正确答案：</span><span class="v ans">' + esc(correctText(q)) + "</span></div>" +
+          '<div class="row"><span class="k">掌握进度：</span><span class="v">已连对 ' + streak + "/" + WRONG_NEED + " 次，连对 " + WRONG_NEED + " 次自动移出</span></div>" +
           (q.type === "fillin" && q.note ? '<div class="row"><span class="k">备注：</span><span class="v src">' + esc(q.note) + "</span></div>" : "") +
           '<div class="row"><span class="k">依据：</span><span class="v src">' + esc(q.source) + "</span></div></div></div>" +
           "</div>";
@@ -1086,7 +1136,7 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     s.qids.forEach(function (id) {
       if (gradeAnswer(QMAP[id], s.answers[id])) correct++;
     });
-    var wrong = s.qids.length - correct;
+    var remaining = Object.keys(getWrong()).length;
     app.innerHTML =
       renderTopbar("重练完成") +
       '<div class="page">' +
@@ -1094,9 +1144,9 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
       '<div class="score-ring" style="--p:' + Math.round(correct / s.qids.length * 100) + '%">' +
       '<div class="val">' + correct + '<small> / ' + s.qids.length + " 题</small></div><div class=\"lab\">答对题数</div></div>" +
       '<div class="sub">用时 <b>' + fmtTime(duration) + "</b></div>" +
-      (wrong
-        ? '<div class="sub" style="margin-top:4px;color:var(--red)">还有 ' + wrong + " 道错题保留在错题集</div>"
-        : '<div class="sub" style="margin-top:4px;color:var(--green)">全部消灭，错题集清空相关题目！🎉</div>') +
+      (remaining
+        ? '<div class="sub" style="margin-top:4px;color:var(--red)">' + remaining + " 道错题未连对 " + WRONG_NEED + " 次，保留在错题集</div>"
+        : '<div class="sub" style="margin-top:4px;color:var(--green)">全部错题已连对 ' + WRONG_NEED + " 次，成功移出！🎉</div>") +
       "</div>" +
       '<div class="btn-row"><button class="btn-sub" data-act="book">返回错题集</button>' +
       '<button class="btn-sub" data-act="home">返回首页</button></div>' +
