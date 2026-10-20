@@ -15,6 +15,7 @@
   var QUIZ_SIZES = [20, 50, 100];
   var SCORE_PER_Q = 2;
   var WRONG_NEED = 3;   // 错题需连续答对的次数才移出错题集
+  var SHUFFLE_OPTIONS = true;   // 单选/多选选项顺序随机（每次会话不同，会话内固定）
 
   function lsGet(key, def) {
     try {
@@ -139,18 +140,19 @@
     return false;
   }
 
-  /* 答案展示文本 */
-  function answerText(q, ans) {
+  /* 答案展示文本。orders 传入时把原始字母翻译成用户看到的显示字母 */
+  function answerText(q, ans, orders) {
     if (ans === undefined || ans === null) return "未作答";
+    var dl = function (l) { return displayLetter(q, orders, l); };
     if (q.type === "single" || q.type === "judge") {
       var opt = optionOf(q, ans);
-      return ans + (opt ? ". " + opt : "");
+      return dl(ans) + (opt ? ". " + opt : "");
     }
     if (q.type === "multi") {
       if (!Array.isArray(ans) || !ans.length) return "未作答";
-      return ans.slice().sort().map(function (l) {
+      return ans.slice().sort(function (a, b) { return dl(a) < dl(b) ? -1 : 1; }).map(function (l) {
         var o = optionOf(q, l);
-        return l + (o ? ". " + o : "");
+        return dl(l) + (o ? ". " + o : "");
       }).join("　");
     }
     if (q.type === "fillin") {
@@ -161,15 +163,16 @@
     }
     return String(ans);
   }
-  function correctText(q) {
+  function correctText(q, orders) {
+    var dl = function (l) { return displayLetter(q, orders, l); };
     if (q.type === "single" || q.type === "judge") {
       var opt = optionOf(q, q.answer[0]);
-      return q.answer[0] + (opt ? ". " + opt : "");
+      return dl(q.answer[0]) + (opt ? ". " + opt : "");
     }
     if (q.type === "multi") {
-      return q.answer.map(function (l) {
+      return q.answer.slice().sort(function (a, b) { return dl(a) < dl(b) ? -1 : 1; }).map(function (l) {
         var o = optionOf(q, l);
-        return l + (o ? ". " + o : "");
+        return dl(l) + (o ? ". " + o : "");
       }).join("　");
     }
     if (q.type === "fillin") {
@@ -373,6 +376,36 @@
     });
   }
 
+  /* ---------------- 选项乱序 ----------------
+     会话创建时为每道 single/multi 题生成显示顺序映射 orders[qid] = [原始字母数组]，
+     同一会话（含刷新恢复）顺序固定，新会话重新洗牌；判断/填空不参与。
+     data-pick 仍存原始字母，判分/错题集/统计零改动；展示字母按显示位置标 A/B/C… */
+  function buildOrders(qids) {
+    var orders = {};
+    if (!SHUFFLE_OPTIONS) return orders;
+    qids.forEach(function (id) {
+      var q = QMAP[id];
+      if (q && (q.type === "single" || q.type === "multi") && q.options.length > 1) {
+        orders[id] = shuffle(q.options.map(function (o) { return o[0]; }));
+      }
+    });
+    return orders;
+  }
+  /* 原始字母 → 用户看到的显示字母 */
+  function displayLetter(q, orders, origLetter) {
+    var ord = orders && orders[q.id];
+    if (!ord) return origLetter;
+    var i = ord.indexOf(origLetter);
+    return i >= 0 ? "ABCDEF"[i] : origLetter;
+  }
+  /* 显示字母 → 原始字母 */
+  function origLetter(q, orders, dispLetter) {
+    var ord = orders && orders[q.id];
+    if (!ord) return dispLetter;
+    var i = "ABCDEF".indexOf(dispLetter);
+    return i >= 0 && ord[i] ? ord[i] : dispLetter;
+  }
+
   /* ================= 开始练习 ================= */
   function startExam() {
     var pool = poolFromFilters();
@@ -388,7 +421,8 @@
       answers: {},
       start: Date.now(),
       submitted: false,
-      fb: null
+      fb: null,
+      orders: buildOrders(picks.map(function (q) { return q.id; }))
     };
     saveSession();
     renderPractice();
@@ -451,8 +485,9 @@
       }
       var detail = (fb.correct
         ? "<b>回答正确 ✓</b>"
-        : "<b>回答错误 ✕</b><div class=\"why\">正确答案：<em>" + esc(correctText(q)) + "</em>" +
+        : "<b>回答错误 ✕</b><div class=\"why\">正确答案：<em>" + esc(correctText(q, s.orders)) + "</em>" +
           (q.type === "fillin" && q.note ? "<br>备注：<em>" + esc(q.note) + "</em>" : "") +
+          (q.excerpt ? "<br>📖 原文摘录：<em>" + esc(q.excerpt) + "</em>" : "") +
           "<br>依据：<em>" + esc(q.source) + "</em></div>") +
         (extra ? '<div class="why">' + esc(extra) + "</div>" : "");
       var panel = document.createElement("div");
@@ -535,14 +570,22 @@
       }
       html += "</div>";
     } else {
+      var orders = session && session.orders ? session.orders : {};
+      var ord = orders[q.id];   // 显示顺序（原始字母数组）；无则原始顺序
+      var shownLetters = ord ? ord : q.options.map(function (o) { return o[0]; });
       html += '<div class="opts">';
-      q.options.forEach(function (opt) {
-        var letter = opt[0];
+      shownLetters.forEach(function (letter, pos) {
+        var opt = null;
+        for (var k = 0; k < q.options.length; k++) {
+          if (q.options[k][0] === letter) { opt = q.options[k]; break; }
+        }
+        if (!opt) return;
+        var disp = "ABCDEF"[pos];   // 用户看到的字母 = 显示位置
         var on = q.type === "multi"
           ? (Array.isArray(ans) && ans.indexOf(letter) >= 0)
           : ans === letter;
         html += '<button class="opt' + (on ? " on" : "") + '" data-pick="' + letter + '">' +
-          '<span class="letter">' + letter + "</span><span>" + esc(opt[1]) + "</span></button>";
+          '<span class="letter">' + disp + "</span><span>" + esc(opt[1]) + "</span></button>";
       });
       html += "</div>";
       if (q.type === "multi") html += '<p style="margin-top:8px;font-size:12px;color:var(--text-sub)">多选题：选出所有你认为正确的选项</p>';
@@ -639,11 +682,12 @@
           }
         }
       } else {
-        detail = '<div class="row"><span class="k">你的答案：</span><span class="v ' + (item.correct ? "ans" : "you-bad") + '">' + esc(answerText(q, item.ans)) + "</span></div>";
+        detail = '<div class="row"><span class="k">你的答案：</span><span class="v ' + (item.correct ? "ans" : "you-bad") + '">' + esc(answerText(q, item.ans, s.orders)) + "</span></div>";
         if (!item.correct) {
-          detail += '<div class="row"><span class="k">正确答案：</span><span class="v ans">' + esc(correctText(q)) + "</span></div>";
+          detail += '<div class="row"><span class="k">正确答案：</span><span class="v ans">' + esc(correctText(q, s.orders)) + "</span></div>";
         }
       }
+      if (q.excerpt) detail += '<div class="row excerpt"><span class="k">📖 原文：</span><span class="v">' + esc(q.excerpt) + "</span></div>";
       detail += '<div class="row"><span class="k">依据：</span><span class="v src">' + esc(q.source) + "</span></div>";
 
       return '<div class="r-item ' + cls + '">' +
@@ -712,6 +756,7 @@
           '<div class="r-detail"><div class="row"><span class="k">正确答案：</span><span class="v ans">' + esc(correctText(q)) + "</span></div>" +
           '<div class="row"><span class="k">掌握进度：</span><span class="v">已连对 ' + streak + "/" + WRONG_NEED + " 次，连对 " + WRONG_NEED + " 次自动移出</span></div>" +
           (q.type === "fillin" && q.note ? '<div class="row"><span class="k">备注：</span><span class="v src">' + esc(q.note) + "</span></div>" : "") +
+          (q.excerpt ? '<div class="row excerpt"><span class="k">📖 原文：</span><span class="v">' + esc(q.excerpt) + "</span></div>" : "") +
           '<div class="row"><span class="k">依据：</span><span class="v src">' + esc(q.source) + "</span></div></div></div>" +
           "</div>";
       }).join("");
@@ -722,7 +767,9 @@
       '<div class="page">' +
       '<div class="btn-row" style="margin-bottom:14px">' +
       '<button class="btn-main" data-act="practice" ' + (entries.length ? "" : "disabled") + ">错题重练（即时批改）</button>" +
+      '<button class="btn-sub" data-act="recite" ' + (entries.length ? "" : "disabled") + ">错题背诵</button>" +
       "</div>" +
+      '<p style="text-align:center;color:var(--text-sub);font-size:12px;margin:-6px 0 12px">背诵是纯复习：先回忆再看答案自评，不计入做题统计，也不影响连对进度</p>' +
       (entries.length
         ? '<div style="text-align:right;margin-bottom:6px"><button class="link-btn" data-act="clear">清空错题集</button></div>'
         : "") +
@@ -732,6 +779,9 @@
     bindBack(renderHome);
     $("[data-act=practice]", app).onclick = function () {
       startWrongPractice(entries.map(function (e) { return e.q.id; }));
+    };
+    $("[data-act=recite]", app).onclick = function () {
+      startRecite(entries.map(function (e) { return e.q.id; }));
     };
     var clearBtn = $("[data-act=clear]", app);
     if (clearBtn) clearBtn.onclick = function () {
@@ -760,6 +810,97 @@
     });
   }
 
+  /* ================= 错题背诵（纯复习：不动连对/统计/错题集，不持久化） ================= */
+  var recite = null;   // {qids, idx, known, unknown, revealed} 仅存内存，刷新即弃
+
+  function startRecite(qids) {
+    if (!qids.length) { toast("没有可背诵的错题"); return; }
+    recite = { qids: shuffle(qids), idx: 0, known: 0, unknown: 0, revealed: false };
+    renderRecite();
+  }
+
+  function renderRecite() {
+    var r = recite;
+    if (r.idx >= r.qids.length) { renderReciteSummary(); return; }
+    var q = QMAP[r.qids[r.idx]];
+    var total = r.qids.length;
+
+    var bodyHtml;
+    if (q.type === "fillin") {
+      bodyHtml = '<div class="recite-hint">先回想答案，再点击揭晓</div>';
+    } else if (q.type === "judge") {
+      bodyHtml = '<div class="judge-btns recite-opts">' +
+        '<span class="opt">对</span><span class="opt">错</span></div>';
+    } else {
+      bodyHtml = '<div class="opts recite-opts">' +
+        q.options.map(function (o) {
+          return '<div class="opt"><span class="letter">' + o[0] + "</span><span>" + esc(o[1]) + "</span></div>";
+        }).join("") + "</div>";
+    }
+
+    var revealHtml = r.revealed
+      ? '<div class="recite-reveal">' +
+        '<div class="recite-ans">✅ 正确答案：' + esc(correctText(q)) + "</div>" +
+        (q.type === "fillin" && q.note ? '<div class="recite-src">📌 ' + esc(q.note) + "</div>" : "") +
+        (q.excerpt ? '<div class="recite-src">📖 原文摘录：' + esc(q.excerpt) + "</div>" : "") +
+        '<div class="recite-src">依据：' + esc(q.source) + "</div></div>" +
+        '<div class="btn-row" style="margin-top:14px">' +
+        '<button class="btn-sub" data-act="r-unknown">😵 还没记住</button>' +
+        '<button class="btn-main" style="padding:12px" data-act="r-known">😎 记住了</button>' +
+        "</div>"
+      : '<button class="btn-main" data-act="r-reveal" style="margin-top:16px">显示答案</button>';
+
+    app.innerHTML =
+      '<div class="topbar quiz-top">' +
+      '<div class="meta"><div class="no">错题背诵 <b>' + (r.idx + 1) + "</b>/" + total + "</div>" +
+      '<div class="timer">记住 ' + r.known + " · 待巩固 " + r.unknown + "</div></div>" +
+      '<button class="quit" data-act="r-quit">退出</button>' +
+      "</div>" +
+      '<div class="page"><div class="card qcard">' +
+      '<div class="qhead"><span class="badge type">' + TYPE_NAME[q.type] + '</span>' +
+      '<span class="badge cat">' + esc(q.category) + "</span></div>" +
+      '<div class="stem">' + esc(q.stem) + "</div>" +
+      (q.note && !r.revealed && q.type !== "fillin" ? "" : "") +
+      bodyHtml + revealHtml +
+      "</div></div>";
+
+    $("[data-act=r-quit]", app).onclick = function () {
+      recite = null;
+      renderWrongbook();
+    };
+    var rv = $("[data-act=r-reveal]", app);
+    if (rv) rv.onclick = function () { r.revealed = true; renderRecite(); };
+    var kn = $("[data-act=r-known]", app);
+    if (kn) kn.onclick = function () { r.known++; r.revealed = false; r.idx++; renderRecite(); };
+    var un = $("[data-act=r-unknown]", app);
+    if (un) un.onclick = function () { r.unknown++; r.revealed = false; r.idx++; renderRecite(); };
+  }
+
+  function renderReciteSummary() {
+    var r = recite;
+    var total = r.known + r.unknown;
+    app.innerHTML =
+      renderTopbar("背诵完成") +
+      '<div class="page">' +
+      '<div class="card score-card">' +
+      '<div class="score-ring" style="--p:' + (total ? Math.round(r.known / total * 100) : 0) + '%">' +
+      '<div class="val">' + r.known + '<small> / ' + total + " 题</small></div><div class=\"lab\">记住了</div></div>" +
+      '<div class="sub">本次背诵 ' + total + " 道错题<span class=\"sep\">|</span>待巩固 " + r.unknown + " 道</div>" +
+      (r.unknown
+        ? '<div class="sub" style="margin-top:4px;color:var(--text-sub)">背诵不计入连对进度；要移出错题集还需在练习/重练中连对 ' + WRONG_NEED + " 次</div>"
+        : '<div class="sub" style="margin-top:4px;color:var(--green)">全部记住！去重练检验一下吧 💪</div>') +
+      "</div>" +
+      '<div class="btn-row"><button class="btn-sub" data-act="r-again">再背一轮</button>' +
+      '<button class="btn-sub" data-act="r-practice">去错题重练</button></div>' +
+      '<div style="height:12px"></div>' +
+      '<button class="btn-main" data-act="book">返回错题集</button>' +
+      "</div>";
+    bindBack(renderWrongbook);
+    $("[data-act=r-again]", app).onclick = function () { startRecite(r.qids); };
+    $("[data-act=r-practice]", app).onclick = function () { startWrongPractice(r.qids); };
+    $("[data-act=book]", app).onclick = function () { recite = null; renderWrongbook(); };
+  }
+
   /* ================= 错题重练（即时反馈） ================= */
   function startWrongPractice(qids) {
     if (!qids.length) { toast("没有可重练的错题"); return; }
@@ -770,7 +911,8 @@
       answers: {},
       start: Date.now(),
       submitted: false,
-      fb: null
+      fb: null,
+      orders: buildOrders(qids)
     };
     saveSession();
     renderPractice();
