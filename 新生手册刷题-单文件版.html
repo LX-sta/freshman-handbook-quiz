@@ -503,7 +503,12 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
   function getStats() { return lsGet(LS_KEY.stats, { quizzes: 0, answered: 0, correct: 0 }); }
   function addStats(answered, correct) {
     var s = getStats();
-    s.quizzes += 1; s.answered += answered; s.correct += correct;
+    s.answered += answered; s.correct += correct;
+    lsSet(LS_KEY.stats, s);
+  }
+  function bumpQuizCount() {
+    var s = getStats();
+    s.quizzes += 1;
     lsSet(LS_KEY.stats, s);
   }
 
@@ -526,15 +531,15 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
   }
 
   /* ---------------- 会话 ---------------- */
-  var session = null;   // {mode, qids, idx, answers, start, filters, submitted, wpFeedback}
+  var session = null;   // {mode, qids, idx, answers, start, submitted, fb}
   var timerHandle = null;
 
   function saveSession() { if (session) lsSet(LS_KEY.session, session); else localStorage.removeItem(LS_KEY.session); }
   function loadSession() {
     var s = lsGet(LS_KEY.session, null);
     if (s && s.qids && s.qids.length && !s.submitted) {
-      // 校验题目仍存在
-      var ok = s.qids.every(function (id) { return !!QMAP[id]; });
+      // 校验题目仍存在；旧版会话无逐题批改状态，直接作废
+      var ok = s.qids.every(function (id) { return !!QMAP[id]; }) && s.fb !== undefined;
       if (ok) return s;
     }
     return null;
@@ -602,7 +607,7 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
       '</span></div><div class="chip-grid">' + catChips + "</div></div>" +
 
       '<button class="btn-main" data-act="start">开始练习（随机 20 题）</button>' +
-      '<p style="text-align:center;color:var(--text-sub);font-size:12px;margin-top:10px">错题会自动加入错题集 · 答题进度本地保存，刷新不丢失</p>' +
+      '<p style="text-align:center;color:var(--text-sub);font-size:12px;margin-top:10px">每答一题立即判对错 · 错题自动加入错题集 · 进度本地保存</p>' +
       "</div>";
 
     // 题型切换
@@ -657,61 +662,118 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
       answers: {},
       start: Date.now(),
       submitted: false,
-      wpFeedback: null
+      fb: null
     };
     saveSession();
-    renderQuiz();
+    renderPractice();
   }
 
-  /* ================= 答题页 ================= */
-  function renderQuiz() {
+  /* ================= 答题页（练习/错题重练 共用，逐题即时批改） ================= */
+  function renderPractice() {
     var s = session;
+    if (s.idx >= s.qids.length) {
+      stopTimer();
+      if (s.mode === "wrong") { renderWrongPracticeSummary(); return; }
+      s.submitted = true;
+      s.duration = Math.floor((Date.now() - s.start) / 1000);
+      bumpQuizCount();
+      saveSession();
+      renderResult();
+      return;
+    }
     var q = QMAP[s.qids[s.idx]];
     var total = s.qids.length;
-    var answeredCount = s.qids.filter(function (id) { return isAnswered(QMAP[id], s.answers[id]); }).length;
-
-    // 答题卡
-    var cardHtml = s.qids.map(function (id, i) {
-      var cls = ["anscard-btn"];
-      if (isAnswered(QMAP[id], s.answers[id])) cls.push("answered");
-      if (i === s.idx) cls.push("current");
-      return '<button class="' + cls.join(" ") + '" data-jump="' + i + '">' + (i + 1) + "</button>";
-    }).join("");
+    var isW = s.mode === "wrong";
+    var fb = s.fb && s.fb.qid === q.id ? s.fb : null;
+    var ans = s.answers[q.id];
 
     app.innerHTML =
       '<div class="topbar quiz-top">' +
-      '<div class="meta"><div class="no">第 <b>' + (s.idx + 1) + "</b>/" + total + " 题</div>" +
-      '<div class="timer" data-timer>00:00</div></div>' +
+      '<div class="meta"><div class="no">' +
+      (isW ? "错题重练 <b>" + (s.idx + 1) + "</b>/" + total
+           : "第 <b>" + (s.idx + 1) + "</b>/" + total + " 题") +
+      '</div><div class="timer" data-timer>00:00</div></div>' +
       '<button class="quit" data-act="quit">退出</button>' +
       "</div>" +
-      '<div class="anscard">' + cardHtml + "</div>" +
       '<div class="page"><div class="card qcard" data-qcard></div>' +
       '<div class="quiz-nav">' +
-      '<button data-nav="prev"' + (s.idx === 0 ? " disabled" : "") + ">上一题</button>" +
-      (s.idx === total - 1
-        ? '<button class="primary" data-nav="submit">交卷</button>'
-        : '<button class="primary" data-nav="next">下一题</button>') +
-      "</div>" +
-      '<p style="text-align:center;color:var(--text-sub);font-size:12px;margin-top:8px">已答 ' + answeredCount + "/" + total + "</p>" +
-      "</div>";
+      (fb
+        ? '<button class="primary" data-nav="next">' +
+          (s.idx === total - 1 ? (isW ? "查看总结" : "查看结果") : "下一题") + "</button>"
+        : ((q.type === "multi" || q.type === "fillin")
+            ? '<button class="primary" data-nav="submit" ' +
+              (isAnswered(q, ans) ? "" : "disabled") + ">提交本题</button>"
+            : "")) +
+      "</div></div>";
 
-    renderQuestionCard(q, s.answers[q.id], false);
+    renderQuestionCard(q, ans, !!fb);
 
-    $$("[data-jump]", app).forEach(function (b) {
-      b.onclick = function () { session.idx = +b.getAttribute("data-jump"); saveSession(); renderQuiz(); };
-    });
-    $("[data-nav=prev]", app).onclick = function () { session.idx--; saveSession(); renderQuiz(); };
-    var nextBtn = $("[data-nav=next]", app);
-    if (nextBtn) nextBtn.onclick = function () { session.idx++; saveSession(); renderQuiz(); };
-    var subBtn = $("[data-nav=submit]", app);
-    if (subBtn) subBtn.onclick = trySubmitExam;
+    // 已批改：选项/输入框着色 + 反馈面板
+    if (fb) {
+      applyReviewStyle(q, ans, fb);
+      var extra = isW
+        ? (fb.correct ? "已自动移出错题集" : "错误次数 +1，保留在错题集")
+        : (fb.correct ? "" : "已加入错题集");
+      var detail = (fb.correct
+        ? "<b>回答正确 ✓</b>"
+        : "<b>回答错误 ✕</b><div class=\"why\">正确答案：<em>" + esc(correctText(q)) + "</em>" +
+          (q.type === "fillin" && q.note ? "<br>备注：<em>" + esc(q.note) + "</em>" : "") +
+          "<br>依据：<em>" + esc(q.source) + "</em></div>") +
+        (extra ? '<div class="why">' + esc(extra) + "</div>" : "");
+      var panel = document.createElement("div");
+      panel.className = "feedback " + (fb.correct ? "good" : "bad");
+      panel.innerHTML = detail;
+      $(".quiz-nav", app).before(panel);
+    }
+
     $("[data-act=quit]", app).onclick = function () {
-      confirmDialog("退出练习", "退出后本次答题记录将不作数，确定退出吗？", "退出", function () {
-        renderHome();
+      confirmDialog("退出练习", "已作答的题目已完成即时批改，退出后未作答的题不再继续。确定退出吗？", "退出", function () {
+        stopTimer();
+        session = null; saveSession();
+        if (isW) renderWrongbook(); else renderHome();
       });
+    };
+    var sub = $("[data-nav=submit]", app);
+    if (sub) sub.onclick = gradeCurrent;
+    var nx = $("[data-nav=next]", app);
+    if (nx) nx.onclick = function () {
+      session.fb = null;
+      session.idx++;
+      saveSession();
+      renderPractice();
+      window.scrollTo(0, 0);
     };
 
     startTimer();
+  }
+
+  /* 批改当前题：立即判对错并产生副作用（统计/错题集） */
+  function gradeCurrent() {
+    var s = session;
+    var q = QMAP[s.qids[s.idx]];
+    var ans = s.answers[q.id];
+    if (!isAnswered(q, ans)) { toast("请先作答"); return; }
+    var correct = gradeAnswer(q, ans);
+    s.fb = { qid: q.id, correct: correct };
+    addStats(1, correct ? 1 : 0);
+    if (s.mode === "wrong") {
+      if (correct) {
+        removeWrong(q.id);
+      } else {
+        var w = getWrong();
+        if (w[q.id]) {
+          w[q.id].count += 1; w[q.id].lastAnswer = ans; w[q.id].time = Date.now();
+          setWrong(w);
+        } else {
+          recordWrong([q.id], s.answers);
+        }
+      }
+    } else if (!correct) {
+      recordWrong([q.id], s.answers);
+    }
+    saveSession();
+    renderPractice();
+    window.scrollTo(0, 0);
   }
 
   /* 渲染单题卡片。review=true 时为错题重练的已批改状态展示 */
@@ -766,18 +828,23 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
   }
 
   function pickOption(q, letter) {
+    if (session.fb && session.fb.qid === q.id) return; // 已批改，锁定
     var ans = session.answers[q.id];
     if (q.type === "single" || q.type === "judge") {
-      ans = letter;
-    } else if (q.type === "multi") {
+      // 点选即批改
+      session.answers[q.id] = letter;
+      saveSession();
+      gradeCurrent();
+      return;
+    }
+    if (q.type === "multi") {
       ans = Array.isArray(ans) ? ans.slice() : [];
       var i = ans.indexOf(letter);
       if (i >= 0) ans.splice(i, 1); else ans.push(letter);
+      session.answers[q.id] = ans;
+      saveSession();
+      renderPractice(); // 重绘以更新勾选与提交按钮状态
     }
-    session.answers[q.id] = ans;
-    saveSession();
-    if (session.mode === "wrong") renderWrongPractice();
-    else renderQuiz();
   }
   function fillInput(q, idx, val) {
     var ans = Array.isArray(session.answers[q.id]) ? session.answers[q.id].slice() : [];
@@ -785,7 +852,9 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     ans[idx] = val;
     session.answers[q.id] = ans;
     saveSession();
-    // 不整页重绘，避免输入被打断
+    // 不整页重绘，避免输入被打断；只更新提交按钮可用状态
+    var sub = $("[data-nav=submit]", app);
+    if (sub) sub.disabled = !isAnswered(q, ans);
   }
 
   /* 计时器 */
@@ -803,27 +872,7 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
   }
   function stopTimer() { if (timerHandle) { clearInterval(timerHandle); timerHandle = null; } }
 
-  /* ================= 交卷与结果 ================= */
-  function trySubmitExam() {
-    var s = session;
-    var unanswered = s.qids.filter(function (id) { return !isAnswered(QMAP[id], s.answers[id]); });
-    var doSubmit = function () { submitExam(); };
-    if (unanswered.length) {
-      confirmDialog("还有未答的题", "还有 " + unanswered.length + " 道题未作答，未答题按错误计入，确定交卷吗？", "交卷", doSubmit);
-    } else {
-      doSubmit();
-    }
-  }
-
-  function submitExam() {
-    var s = session;
-    stopTimer();
-    s.submitted = true;
-    s.duration = Math.floor((Date.now() - s.start) / 1000);
-    saveSession();
-    renderResult();
-  }
-
+  /* ================= 结果页（逐题批改已完成，此处仅汇总展示） ================= */
   function renderResult() {
     var s = session;
     var correctIds = [], wrongIds = [];
@@ -837,10 +886,6 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     var score = correctIds.length * SCORE_PER_Q;
     var totalScore = s.qids.length * SCORE_PER_Q;
     var pct = Math.round(correctIds.length / s.qids.length * 100);
-
-    // 统计 + 错题入册
-    addStats(s.qids.length, correctIds.length);
-    if (wrongIds.length) recordWrong(wrongIds, s.answers);
 
     var ringP = Math.round(correctIds.length / s.qids.length * 100);
 
@@ -898,7 +943,6 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     $("[data-act=again]", app).onclick = function () { startExam(); };
     $("[data-act=home]", app).onclick = renderHome;
   }
-
   /* ================= 错题集 ================= */
   function renderWrongbook() {
     stopTimer();
@@ -989,88 +1033,10 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
       answers: {},
       start: Date.now(),
       submitted: false,
-      wpFeedback: null
+      fb: null
     };
     saveSession();
-    renderWrongPractice();
-  }
-
-  function renderWrongPractice() {
-    var s = session;
-    if (s.idx >= s.qids.length) { renderWrongPracticeSummary(); return; }
-    var q = QMAP[s.qids[s.idx]];
-    var total = s.qids.length;
-    var fb = s.wpFeedback && s.wpFeedback.qid === q.id ? s.wpFeedback : null;
-    var ans = s.answers[q.id];
-
-    app.innerHTML =
-      '<div class="topbar quiz-top">' +
-      '<div class="meta"><div class="no">错题重练 <b>' + (s.idx + 1) + "</b>/" + total + "</div></div>" +
-      '<button class="quit" data-act="quit">退出</button>' +
-      "</div>" +
-      '<div class="page"><div class="card qcard" data-qcard></div>' +
-      '<div class="quiz-nav">' +
-      (fb
-        ? '<button class="primary" data-nav="wp-next">' + (s.idx === total - 1 ? "查看总结" : "下一题") + "</button>"
-        : '<button class="primary" data-nav="wp-submit" ' + (isAnswered(q, ans) ? "" : "disabled") + ">提交本题</button>") +
-      "</div></div>";
-
-    renderQuestionCard(q, ans, !!fb);
-
-    // 已批改时给选项/输入框上色
-    if (fb) applyReviewStyle(q, ans, fb);
-
-    // 批改反馈面板
-    if (fb) {
-      var detail = fb.correct
-        ? "<b>回答正确 ✓</b><div class=\"why\">已自动移出错题集</div>"
-        : "<b>回答错误 ✕</b><div class=\"why\">正确答案：<em>" + esc(correctText(q)) + "</em>" +
-          (q.type === "fillin" && q.note ? "<br>备注：<em>" + esc(q.note) + "</em>" : "") +
-          "<br>依据：<em>" + esc(q.source) + "</em></div>";
-      var panel = document.createElement("div");
-      panel.className = "feedback " + (fb.correct ? "good" : "bad");
-      panel.innerHTML = detail;
-      $(".quiz-nav", app).before(panel);
-    }
-
-    $("[data-act=quit]", app).onclick = function () {
-      confirmDialog("退出重练", "退出后剩余错题保留在错题集中，确定退出吗？", "退出", renderWrongbook);
-    };
-    var sub = $("[data-nav=wp-submit]", app);
-    if (sub) sub.onclick = wpSubmit;
-    var nx = $("[data-nav=wp-next]", app);
-    if (nx) nx.onclick = function () {
-      session.wpFeedback = null;
-      session.idx++;
-      saveSession();
-      renderWrongPractice();
-    };
-  }
-
-  function wpSubmit() {
-    var s = session;
-    var q = QMAP[s.qids[s.idx]];
-    var ans = s.answers[q.id];
-    if (!isAnswered(q, ans)) { toast("请先作答"); return; }
-    var correct = gradeAnswer(q, ans);
-    session.wpFeedback = { qid: q.id, correct: correct };
-    if (correct) {
-      removeWrong(q.id);
-      addStats(1, 1);
-    } else {
-      addStats(1, 0);
-      // 错题次数+1
-      var w = getWrong();
-      if (w[q.id]) {
-        w[q.id].count += 1; w[q.id].lastAnswer = ans; w[q.id].time = Date.now();
-        setWrong(w);
-      } else {
-        recordWrong([q.id], s.answers);
-      }
-    }
-    saveSession();
-    renderWrongPractice();
-    window.scrollTo(0, 0);
+    renderPractice();
   }
 
   /* 批改后的选项着色 */
@@ -1151,8 +1117,8 @@ var QUESTIONS = [{"id":1,"type":"single","stem":"学分学费每学年末根据�
     var s = loadSession();
     if (s) {
       session = s;
-      if (session.mode === "wrong") { renderWrongPractice(); return; }
-      renderQuiz(); return;
+      renderPractice();
+      return;
     }
     renderHome();
   }
