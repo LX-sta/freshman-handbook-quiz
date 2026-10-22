@@ -212,6 +212,7 @@ input[type="text"] { font-family: inherit; font-size: 15px; }
 .feedback b { font-size: 15px; }
 .feedback .why { margin-top: 6px; color: var(--text-sub); font-size: 13px; }
 .feedback .why em { font-style: normal; color: var(--text); }
+.feedback .why.explain { background: rgba(255, 255, 255, 0.6); border-radius: 8px; padding: 8px 10px; color: var(--text); }
 
 /* ============ 结果页 ============ */
 .score-card { text-align: center; padding: 26px 16px; }
