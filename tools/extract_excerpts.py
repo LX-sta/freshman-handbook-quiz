@@ -395,6 +395,19 @@ def build_excerpt(q, article, stem_bg):
         result = result[:MAX_HARD] + "……"
     return result
 
+# ---------------------------------------------------------------- 人工解析（按题干关键词覆盖，重跑不丢）
+# 计算类/易错题补「解析」，前端在答题反馈/结果页/错题集/背诵卡中展示（label：💡 解析）
+EXPLAINS = {
+    "已知英语": "计算方法：单科绩点 = 成绩 ÷ 10 - 5（英语 85÷10-5=3.5，数学 98÷10-5=4.8，军理 91÷10-5=4.1）；加权平均绩点 = Σ(单科绩点 × 该课学分) ÷ Σ学分 = (3.5×3 + 4.8×5 + 4.1×1) ÷ (3+5+1) = 38.6 ÷ 9 ≈ 4.29。",
+}
+
+def apply_explains(questions):
+    for q in questions:
+        for key, text in EXPLAINS.items():
+            if key in q["stem"]:
+                q["explain"] = text
+                break
+
 # ---------------------------------------------------------------- 主流程
 
 def main():
@@ -501,6 +514,7 @@ def main():
     # 重建 data.js（保留其他字段原样）
     for q in questions:
         q["excerpt"] = excerpts.get(q["id"], "")
+    apply_explains(questions)
     payload = "var QUESTIONS = " + json.dumps(questions, ensure_ascii=False, separators=(",", ":")) + ";\n"
     DATA_JS.write_text(payload, encoding="utf-8")
 
