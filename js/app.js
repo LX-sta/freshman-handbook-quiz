@@ -489,6 +489,7 @@
           (q.type === "fillin" && q.note ? "<br>备注：<em>" + esc(q.note) + "</em>" : "") +
           (q.excerpt ? "<br>📖 原文摘录：<em>" + esc(q.excerpt) + "</em>" : "") +
           "<br>依据：<em>" + esc(q.source) + "</em></div>") +
+        (q.explain ? '<div class="why explain">💡 解析：<em>' + esc(q.explain) + "</em></div>" : "") +
         (extra ? '<div class="why">' + esc(extra) + "</div>" : "");
       var panel = document.createElement("div");
       panel.className = "feedback " + (fb.correct ? "good" : "bad");
@@ -688,6 +689,7 @@
         }
       }
       if (q.excerpt) detail += '<div class="row excerpt"><span class="k">📖 原文：</span><span class="v">' + esc(q.excerpt) + "</span></div>";
+      if (q.explain) detail += '<div class="row excerpt"><span class="k">💡 解析：</span><span class="v">' + esc(q.explain) + "</span></div>";
       detail += '<div class="row"><span class="k">依据：</span><span class="v src">' + esc(q.source) + "</span></div>";
 
       return '<div class="r-item ' + cls + '">' +
@@ -757,6 +759,7 @@
           '<div class="row"><span class="k">掌握进度：</span><span class="v">已连对 ' + streak + "/" + WRONG_NEED + " 次，连对 " + WRONG_NEED + " 次自动移出</span></div>" +
           (q.type === "fillin" && q.note ? '<div class="row"><span class="k">备注：</span><span class="v src">' + esc(q.note) + "</span></div>" : "") +
           (q.excerpt ? '<div class="row excerpt"><span class="k">📖 原文：</span><span class="v">' + esc(q.excerpt) + "</span></div>" : "") +
+          (q.explain ? '<div class="row excerpt"><span class="k">💡 解析：</span><span class="v">' + esc(q.explain) + "</span></div>" : "") +
           '<div class="row"><span class="k">依据：</span><span class="v src">' + esc(q.source) + "</span></div></div></div>" +
           "</div>";
       }).join("");
@@ -843,6 +846,7 @@
         '<div class="recite-ans">✅ 正确答案：' + esc(correctText(q)) + "</div>" +
         (q.type === "fillin" && q.note ? '<div class="recite-src">📌 ' + esc(q.note) + "</div>" : "") +
         (q.excerpt ? '<div class="recite-src">📖 原文摘录：' + esc(q.excerpt) + "</div>" : "") +
+        (q.explain ? '<div class="recite-src">💡 解析：' + esc(q.explain) + "</div>" : "") +
         '<div class="recite-src">依据：' + esc(q.source) + "</div></div>" +
         '<div class="btn-row" style="margin-top:14px">' +
         '<button class="btn-sub" data-act="r-unknown">😵 还没记住</button>' +
